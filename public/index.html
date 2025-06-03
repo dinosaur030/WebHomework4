@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>匯率查詢系統</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    table { border-collapse: collapse; width: 80%; margin-top: 20px; font-size: 14px; }
+    th, td { border: 1px solid #ccc; padding: 5px 10px; text-align: center; }
+    th { background: #eee; }
+    button { margin-top: 10px; padding: 6px 12px; }
+    canvas { margin-top: 20px; display: none; }
+    #loadingText {
+      color: blue;
+      font-weight: bold;
+      display: none;
+    }
+    #loadingText .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: blue;
+      margin-left: 5px;
+      animation: blink 1s infinite alternate;
+    }
+    @keyframes blink {
+      from { opacity: 1; }
+      to { opacity: 0.2; }
+    }
+  </style>
+</head>
+<body>
+<h1>匯率查詢系統</h1>
+
+<label>開始日期 <input type="date" id="startDate"></label>
+<label>結束日期 <input type="date" id="endDate"></label>
+<label>統計方式
+  <select id="statType">
+    <option value="day">每日</option>
+    <option value="month">每月平均</option>
+    <option value="year">每年平均</option>
+  </select>
+</label>
+<button onclick="fetchData()">查詢 FRED 匯率</button>
+<button onclick="generateChart()">生成圖表</button>
+
+<p id="dateRangeInfo"></p>
+<p id="loadingText">載入中<span class="dot"></span></p>
+
+<canvas id="rateChart" width="800" height="400"></canvas>
+
+<table id="resultTable">
+  <thead>
+  <tr>
+    <th>#</th>
+    <th>日期</th>
+    <th>平均匯率 (USD/TWD)</th>
+  </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+  let allData = [];
+  let lastGrouped = [];
+
+  async function init() {
+    const res = await fetch('/api/usd-twd-history');
+    allData = await res.json();
+    if (allData.length === 0) return;
+    const minDate = allData[0].date;
+    const maxDate = allData[allData.length - 1].date;
+    document.getElementById('startDate').value = minDate;
+    document.getElementById('endDate').value = maxDate;
+    document.getElementById('dateRangeInfo').innerText = `資料日期範圍：${minDate} ~ ${maxDate}`;
+  }
+
+  function fetchData() {
+    const loadingText = document.getElementById('loadingText');
+    loadingText.style.display = 'inline-block';
+
+    setTimeout(() => {
+      const start = document.getElementById('startDate').value;
+      const end = document.getElementById('endDate').value;
+      const statType = document.getElementById('statType').value;
+      let filtered = allData.filter(d => d.date >= start && d.date <= end);
+      let grouped = {};
+      if (statType === 'day') {
+        grouped = filtered.map(d => ({ period: d.date, avg_rate: d.rate }));
+      } else {
+        filtered.forEach(d => {
+          let key = (statType === 'month') ? d.date.slice(0,7) : d.date.slice(0,4);
+          if (!grouped[key]) grouped[key] = { sum: 0, count: 0 };
+          grouped[key].sum += d.rate;
+          grouped[key].count++;
+        });
+        grouped = Object.entries(grouped).map(([period, v]) => ({
+          period, avg_rate: v.sum / v.count
+        })).sort((a,b) => a.period.localeCompare(b.period));
+      }
+      lastGrouped = grouped;
+      const tbody = document.querySelector('#resultTable tbody');
+      tbody.innerHTML = '';
+      grouped.forEach((item, index) => {
+        const row = `<tr>
+            <td>${index + 1}</td>
+            <td>${item.period}</td>
+            <td>${item.avg_rate.toFixed(4)}</td>
+          </tr>`;
+        tbody.innerHTML += row;
+      });
+      if (window.chart) window.chart.destroy();
+      document.getElementById('rateChart').style.display = 'none';
+      loadingText.style.display = 'none';
+    }, 300);
+  }
+
+  function generateChart() {
+    const ctx = document.getElementById('rateChart').getContext('2d');
+    document.getElementById('rateChart').style.display = 'block';
+    if (window.chart) window.chart.destroy();
+    window.chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: lastGrouped.map(d => d.period),
+        datasets: [{
+          label: '平均匯率 (USD/TWD)',
+          data: lastGrouped.map(d => d.avg_rate),
+          borderColor: 'blue',
+          fill: false
+        }]
+      }
+    });
+  }
+
+  init();
+</script>
+</body>
+</html>
